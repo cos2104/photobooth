@@ -253,7 +253,7 @@ const KAKAO_JS_KEY = 'e4a66ccdcee53d76e596e6cd51332c23';
       <p>나와 매칭된 과학자와 함께 찰칵</p>
     </button>
     <button class="frame-card" onclick="pickFrame('science')">
-      <div class="frame-preview" style="background:linear-gradient(160deg,#0e3a5e,#1b6e8f)">
+      <div class="frame-preview" style="background:linear-gradient(160deg,#a8dec2,#cdeeda)">
         <i></i><i></i><i></i><i></i>
       </div>
       <h3>🚀 과학의 날 프레임</h3>
@@ -632,36 +632,52 @@ function capture() {
 /* ---------- 스티커 합성 ---------- */
 function composeSticker() {
   const canvas = document.getElementById('stickerCanvas');
-  const W = 600, PAD = 30, GAP = 20;
+  const W = 600, PAD = 34, GAP = 18;
   const photoW = W - PAD * 2;
   const photoH = Math.round(photoW * 3 / 4);
-  const headerH = 90, footerH = 110;
+  const headerH = 104, footerH = 118;
   const H = headerH + photoH * 4 + GAP * 3 + footerH;
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
 
-  // 배경
-  const grad = ctx.createLinearGradient(0, 0, W, H);
-  if (frameType === 'scientist') {
-    grad.addColorStop(0, '#2a2f6e'); grad.addColorStop(1, '#5a3fa0');
+  const isSci = frameType === 'scientist';
+
+  /* ----- 배경 ----- */
+  if (isSci) {
+    const grad = ctx.createLinearGradient(0, 0, W, H);
+    grad.addColorStop(0, '#232963'); grad.addColorStop(1, '#5a3fa0');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+    for (let i = 0; i < 70; i++) {
+      const x = (i * 137.5) % W, y = (i * 91.7) % H;
+      ctx.fillStyle = 'rgba(255,255,255,' + (0.2 + (i % 4) * 0.15) + ')';
+      ctx.beginPath(); ctx.arc(x, y, 1 + (i % 3) * 0.7, 0, Math.PI * 2); ctx.fill();
+    }
   } else {
-    grad.addColorStop(0, '#0e3a5e'); grad.addColorStop(1, '#1b6e8f');
-  }
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, H);
-
-  // 별 장식
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  for (let i = 0; i < 40; i++) {
-    const x = (i * 137.5) % W, y = (i * 91.7) % H;
-    ctx.beginPath(); ctx.arc(x, y, 1.5, 0, Math.PI * 2); ctx.fill();
+    // 파스텔 민트 스트라이프 배경
+    ctx.fillStyle = '#cdeeda';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#c1e7d0';
+    for (let x = 0; x < W; x += 44) ctx.fillRect(x, 0, 22, H);
   }
 
-  // 헤더
-  ctx.fillStyle = '#ffd54a';
-  ctx.font = '900 30px "Malgun Gothic", sans-serif';
+  /* ----- 헤더 ----- */
   ctx.textAlign = 'center';
-  ctx.fillText('🔬 과학의 날 포토부스', W / 2, 55);
+  if (isSci) {
+    ctx.fillStyle = '#ffd54a';
+    ctx.font = '900 32px "Malgun Gothic", sans-serif';
+    ctx.fillText('과학의 날 포토부스', W / 2, 52);
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.font = '700 15px "Malgun Gothic", sans-serif';
+    ctx.fillText('— SCIENCE DAY PHOTO BOOTH —', W / 2, 80);
+  } else {
+    ctx.fillStyle = '#2e7d5b';
+    ctx.font = '900 36px "Malgun Gothic", sans-serif';
+    ctx.fillText('SCIENCE DAY', W / 2, 56);
+    ctx.fillStyle = '#5aa583';
+    ctx.font = '800 17px "Malgun Gothic", sans-serif';
+    ctx.fillText('💚 0 4 2 1 💚 과학의 날 포토부스', W / 2, 86);
+  }
 
   // 사진 4컷
   const imgs = shots.map(src => { const im = new Image(); im.src = src; return im; });
@@ -670,8 +686,11 @@ function composeSticker() {
   if (imgs.every(im => im.complete)) draw();
 
   function draw() {
+    const sciIm = matchedKey ? sciImages[matchedKey] : null;
+
     imgs.forEach((im, i) => {
       const y = headerH + i * (photoH + GAP);
+
       ctx.save();
       roundRect(ctx, PAD, y, photoW, photoH, 14);
       ctx.clip();
@@ -681,40 +700,74 @@ function composeSticker() {
       if (sr > dr) { sw = im.height * dr; sx = (im.width - sw) / 2; }
       else { sh = im.width / dr; sy = (im.height - sh) / 2; }
       ctx.drawImage(im, sx, sy, sw, sh, PAD, y, photoW, photoH);
+
+      // "과학자와 함께" 프레임: 컷마다 캐릭터가 좌우를 번갈아가며 함께 등장
+      if (isSci && matched) {
+        const size = Math.round(photoW * 0.38);
+        const onRight = i % 2 === 0;
+        const cx = onRight ? PAD + photoW - size * 0.52 : PAD + size * 0.52;
+        const cy = y + photoH - size * 0.44;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate((onRight ? 5 : -5) * Math.PI / 180);
+        if (sciIm) {
+          ctx.shadowColor = 'rgba(0,0,0,0.35)';
+          ctx.shadowBlur = 10;
+          ctx.drawImage(sciIm, -size / 2, -size / 2, size, size);
+        } else {
+          ctx.font = Math.round(size * 0.55) + 'px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(matched.avatar, 0, size * 0.18);
+        }
+        ctx.restore();
+      }
       ctx.restore();
-      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-      ctx.lineWidth = 3;
+
+      // 사진 테두리
+      ctx.strokeStyle = isSci ? 'rgba(255,255,255,0.65)' : '#ffffff';
+      ctx.lineWidth = isSci ? 3 : 5;
       roundRect(ctx, PAD, y, photoW, photoH, 14);
       ctx.stroke();
     });
 
-    // 과학자 뱃지 (매칭 결과가 있을 때) — 이미지가 있으면 스티커처럼 붙이고, 없으면 이모지
-    if (frameType === 'scientist' && matched) {
-      const sciIm = matchedKey ? sciImages[matchedKey] : null;
-      if (sciIm) {
-        const size = 150;
+    // "과학의 날" 프레임: 가장자리에 과학 아이콘 스티커 장식
+    if (!isSci) {
+      const deco = ['🧪', '🚀', '🔬', '🧬', '⚗️', '🎈', '⭐', '💚', '🪐', '✨'];
+      const zoneH = photoH * 4 + GAP * 3 + 40;
+      deco.forEach((e, idx) => {
+        const left = idx % 2 === 0;
+        const x = left ? PAD - 5 : W - PAD + 5;
+        const yy = headerH + 5 + idx * (zoneH / deco.length);
         ctx.save();
-        ctx.translate(W - 30 - size / 2, headerH + 30);
-        ctx.rotate(8 * Math.PI / 180);
-        ctx.shadowColor = 'rgba(0,0,0,0.4)';
-        ctx.shadowBlur = 12;
-        ctx.drawImage(sciIm, -size / 2, -size / 2, size, size);
+        ctx.translate(x, yy);
+        ctx.rotate((left ? -15 : 15) * Math.PI / 180);
+        ctx.font = '30px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(e, 0, 10);
         ctx.restore();
-      } else {
-        ctx.font = '52px sans-serif';
-        ctx.fillText(matched.avatar, W - 70, headerH + 60);
-      }
+      });
     }
 
-    // 푸터
+    /* ----- 푸터 ----- */
     const fy = headerH + photoH * 4 + GAP * 3;
-    ctx.fillStyle = '#fff';
-    ctx.font = '700 22px "Malgun Gothic", sans-serif';
-    ctx.fillText(matched ? `나와 닮은 과학자: ${matched.name}` : '과학의 날 기념 🚀', W / 2, fy + 45);
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.font = '15px "Malgun Gothic", sans-serif';
+    ctx.textAlign = 'center';
     const d = new Date();
-    ctx.fillText(`${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`, W / 2, fy + 78);
+    const dateStr = d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
+    if (isSci) {
+      ctx.fillStyle = '#ffd54a';
+      ctx.font = '900 27px "Malgun Gothic", sans-serif';
+      ctx.fillText(matched ? matched.name : '과학의 날 기념', W / 2, fy + 48);
+      ctx.fillStyle = 'rgba(255,255,255,0.65)';
+      ctx.font = '14px "Malgun Gothic", sans-serif';
+      ctx.fillText(matched ? '나와 결이 맞는 과학자와 함께 · ' + dateStr : dateStr, W / 2, fy + 76);
+    } else {
+      ctx.fillStyle = '#2e7d5b';
+      ctx.font = '900 30px "Malgun Gothic", sans-serif';
+      ctx.fillText('HAPPY SCIENCE DAY 💚', W / 2, fy + 50);
+      ctx.fillStyle = '#6fae8f';
+      ctx.font = '14px "Malgun Gothic", sans-serif';
+      ctx.fillText(dateStr, W / 2, fy + 78);
+    }
 
     document.getElementById('stickerImg').src = canvas.toDataURL('image/png');
   }
