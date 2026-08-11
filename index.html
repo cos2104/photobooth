@@ -10,7 +10,7 @@
 <!-- (developers.kakao.com → 내 애플리케이션 → 앱 키 → JavaScript 키) -->
 <!-- ================================================== -->
 <script>
-const KAKAO_JS_KEY = 'e4a66ccdcee53d76e596e6cd51332c23';
+const KAKAO_JS_KEY = '';
 </script>
 
 <script src="https://t1.kakaocdn.net/kakao_js_sdk/2.7.4/kakao.min.js" crossorigin="anonymous"></script>
@@ -172,10 +172,24 @@ const KAKAO_JS_KEY = 'e4a66ccdcee53d76e596e6cd51332c23';
   .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
   .flash.on { animation: flashAnim .3s; }
   @keyframes flashAnim { 0%{opacity:.9} 100%{opacity:0} }
-  .shot-count { color: var(--sub); margin-bottom: 16px; font-size: 15px; }
+  .shot-count { color: var(--sub); margin: 0 0 16px; font-size: 15px; }
   .shot-count b { color: var(--accent); }
-  .thumbs { display: flex; gap: 8px; margin-bottom: 16px; min-height: 54px; }
-  .thumbs img { width: 72px; height: 54px; object-fit: cover; border-radius: 8px; border: 2px solid var(--accent); }
+
+  .frame-back { left: 115px; }
+  .cam-layout { display: flex; gap: 28px; align-items: flex-start; justify-content: center; flex-wrap: wrap; }
+  .cam-col { display: flex; flex-direction: column; align-items: center; }
+  .cam-overlay {
+    position: absolute; bottom: -4%; width: 38%; display: none;
+    pointer-events: none; z-index: 2;
+    filter: drop-shadow(0 4px 10px rgba(0,0,0,.45));
+  }
+  .preview-col { display: flex; flex-direction: column; align-items: center; }
+  .preview-label { color: var(--sub); font-size: 13px; margin-bottom: 8px; letter-spacing: 1px; }
+  #previewCanvas {
+    width: 150px; border-radius: 10px;
+    box-shadow: 0 8px 30px rgba(0,0,0,.45);
+    border: 1px solid rgba(255,255,255,.15);
+  }
 
   .cam-error {
     background: rgba(255,80,80,.15); border: 1px solid rgba(255,80,80,.5);
@@ -265,19 +279,28 @@ const KAKAO_JS_KEY = 'e4a66ccdcee53d76e596e6cd51332c23';
 <!-- 6. 카메라 -->
 <section class="screen" id="scr-camera">
   <button class="home-btn" onclick="goHome()">← 홈으로</button>
+  <button class="home-btn frame-back" onclick="backToFrames()">🖼 프레임 다시 선택</button>
   <div class="cam-error" id="camError">
     <h3>😢 카메라를 사용할 수 없어요</h3>
     <p>브라우저에서 카메라 권한을 허용해주세요. (HTTPS 또는 localhost에서만 동작해요)</p>
     <button class="ghost-btn" style="margin-top:12px" onclick="initCamera()">다시 시도</button>
   </div>
-  <div class="cam-wrap">
-    <video id="video" autoplay playsinline muted></video>
-    <div class="countdown" id="countdown"></div>
-    <div class="flash" id="flash"></div>
+  <div class="cam-layout">
+    <div class="cam-col">
+      <div class="cam-wrap">
+        <video id="video" autoplay playsinline muted></video>
+        <img id="camOverlay" class="cam-overlay" alt="">
+        <div class="countdown" id="countdown"></div>
+        <div class="flash" id="flash"></div>
+      </div>
+      <p class="shot-count"><b id="shotNum">0</b> / 4 컷 &nbsp;·&nbsp; 버튼을 누르면 3초 후 촬영됩니다</p>
+      <button class="big-btn" id="shootBtn" onclick="startShooting()">📸 촬영 시작</button>
+    </div>
+    <div class="preview-col">
+      <p class="preview-label">완성본 미리보기</p>
+      <canvas id="previewCanvas"></canvas>
+    </div>
   </div>
-  <p class="shot-count"><b id="shotNum">0</b> / 4 컷 &nbsp;·&nbsp; 버튼을 누르면 3초 후 촬영됩니다</p>
-  <div class="thumbs" id="thumbs"></div>
-  <button class="big-btn" id="shootBtn" onclick="startShooting()">📸 촬영 시작</button>
 </section>
 
 <!-- 7. 완성 스티커 -->
@@ -290,6 +313,7 @@ const KAKAO_JS_KEY = 'e4a66ccdcee53d76e596e6cd51332c23';
     <button class="big-btn" onclick="saveSticker()">💾 스티커 저장하기</button>
     <button class="kakao-btn" onclick="shareKakao()">💬 카톡으로 보내기</button>
     <button class="ghost-btn" onclick="retake()">다시 찍기</button>
+    <button class="ghost-btn" onclick="backToFrames()">프레임 바꾸기</button>
   </div>
 </section>
 
@@ -385,12 +409,27 @@ const SCIENTISTS = {
 /* ---------- 과학자 이미지 (images/키이름.png 가 있으면 자동 사용, 없으면 이모지) ---------- */
 /* 이미지의 단색 배경(흰색 등)은 자동으로 투명하게 지워집니다.
    가장자리에서 연결된 배경만 지우므로, 인물 안쪽의 흰색(머리카락, 가운 등)은 유지됩니다. */
+/* 포즈별 이미지: images/키이름_1.png ~ 키이름_4.png 가 있으면 1~4컷에 순서대로 사용.
+   없는 컷은 기본 이미지(키이름.png)로 대체됩니다. */
 const sciImages = {};
+const sciPoses = {};
 Object.keys(SCIENTISTS).forEach(k => {
+  sciPoses[k] = [null, null, null, null];
   const im = new Image();
   im.onload = () => { sciImages[k] = removeImageBackground(im); };
   im.src = 'images/' + k + '.png';
+  for (let i = 0; i < 4; i++) {
+    const p = new Image();
+    p.onload = () => { sciPoses[k][i] = removeImageBackground(p); };
+    p.src = 'images/' + k + '_' + (i + 1) + '.png';
+  }
 });
+
+/* 해당 컷에 쓸 캐릭터 이미지 (포즈 → 기본 이미지 순서로 대체) */
+function sciImageFor(key, cut) {
+  if (!key) return null;
+  return (sciPoses[key] && sciPoses[key][cut]) || sciImages[key] || null;
+}
 
 function removeImageBackground(img) {
   const c = document.createElement('canvas');
@@ -523,10 +562,11 @@ function finishQuiz() {
     matched = SCIENTISTS[best];
     matchedKey = best;
     const avatarEl = document.getElementById('rAvatar');
-    if (sciImages[best]) {
+    const avatarIm = sciImageFor(best, 0);
+    if (avatarIm) {
       avatarEl.innerHTML = '';
       const img = document.createElement('img');
-      img.src = sciImages[best].toDataURL();
+      img.src = avatarIm.toDataURL();
       img.alt = matched.name;
       avatarEl.appendChild(img);
     } else {
@@ -577,15 +617,36 @@ function stopCamera() {
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
 }
 
+function backToFrames() {
+  shots = [];
+  showScreen('scr-frame');
+}
+
 function updateShotUI() {
   document.getElementById('shotNum').textContent = shots.length;
-  const t = document.getElementById('thumbs');
-  t.innerHTML = '';
-  shots.forEach(src => {
-    const img = document.createElement('img');
-    img.src = src;
-    t.appendChild(img);
-  });
+  updateOverlay();
+  renderPreview();
+}
+
+/* 라이브 화면 위에 캐릭터가 실제로 합성될 위치를 미리 보여주기 */
+function updateOverlay() {
+  const ov = document.getElementById('camOverlay');
+  const idx = Math.min(shots.length, 3); // 지금 찍을 컷 번호
+  const sciIm = sciImageFor(matchedKey, idx);
+  if (frameType === 'scientist' && matched && sciIm) {
+    const cacheKey = matchedKey + '_' + idx;
+    if (ov.dataset.key !== cacheKey) {
+      ov.src = sciIm.toDataURL();
+      ov.dataset.key = cacheKey;
+    }
+    const onRight = idx % 2 === 0;
+    ov.style.left = onRight ? 'auto' : '2%';
+    ov.style.right = onRight ? '2%' : 'auto';
+    ov.style.transform = 'rotate(' + (onRight ? 5 : -5) + 'deg)';
+    ov.style.display = 'block';
+  } else {
+    ov.style.display = 'none';
+  }
 }
 
 async function startShooting() {
@@ -593,7 +654,9 @@ async function startShooting() {
   const btn = document.getElementById('shootBtn');
   btn.disabled = true;
   while (shots.length < 4) {
+    if (!stream) { btn.disabled = false; return; } // 촬영 도중 화면을 나간 경우
     await countdown(3);
+    if (!stream) { btn.disabled = false; return; }
     capture();
     updateShotUI();
     await sleep(600);
@@ -631,7 +694,18 @@ function capture() {
 
 /* ---------- 스티커 합성 ---------- */
 function composeSticker() {
-  const canvas = document.getElementById('stickerCanvas');
+  drawSticker(document.getElementById('stickerCanvas'), shots, c => {
+    document.getElementById('stickerImg').src = c.toDataURL('image/png');
+  });
+}
+
+/* 촬영 화면 옆 실시간 미리보기 — 찍힌 컷만 채우고 나머지는 빈 칸 */
+function renderPreview() {
+  const pc = document.getElementById('previewCanvas');
+  if (pc) drawSticker(pc, shots);
+}
+
+function drawSticker(canvas, shotList, onDone) {
   const W = 600, PAD = 34, GAP = 18;
   const photoW = W - PAD * 2;
   const photoH = Math.round(photoW * 3 / 4);
@@ -679,30 +753,43 @@ function composeSticker() {
     ctx.fillText('💚 0 4 2 1 💚 과학의 날 포토부스', W / 2, 86);
   }
 
-  // 사진 4컷
-  const imgs = shots.map(src => { const im = new Image(); im.src = src; return im; });
-  let loaded = 0;
-  imgs.forEach(im => im.onload = () => { if (++loaded === imgs.length) draw(); });
-  if (imgs.every(im => im.complete)) draw();
+  // 찍힌 사진 로드 (아직 안 찍힌 컷은 빈 칸으로 표시)
+  const imgs = shotList.map(src => { const im = new Image(); im.src = src; return im; });
+  let started = false;
+  const tryDraw = () => {
+    if (!started && imgs.every(im => im.complete)) { started = true; draw(); }
+  };
+  imgs.forEach(im => im.onload = tryDraw);
+  if (imgs.length === 0) { started = true; draw(); } else tryDraw();
 
   function draw() {
-    const sciIm = matchedKey ? sciImages[matchedKey] : null;
-
-    imgs.forEach((im, i) => {
+    for (let i = 0; i < 4; i++) {
+      const im = imgs[i];
       const y = headerH + i * (photoH + GAP);
 
       ctx.save();
       roundRect(ctx, PAD, y, photoW, photoH, 14);
       ctx.clip();
-      // cover 방식으로 크롭
-      const sr = im.width / im.height, dr = photoW / photoH;
-      let sx = 0, sy = 0, sw = im.width, sh = im.height;
-      if (sr > dr) { sw = im.height * dr; sx = (im.width - sw) / 2; }
-      else { sh = im.width / dr; sy = (im.height - sh) / 2; }
-      ctx.drawImage(im, sx, sy, sw, sh, PAD, y, photoW, photoH);
+      if (im) {
+        // cover 방식으로 크롭
+        const sr = im.width / im.height, dr = photoW / photoH;
+        let sx = 0, sy = 0, sw = im.width, sh = im.height;
+        if (sr > dr) { sw = im.height * dr; sx = (im.width - sw) / 2; }
+        else { sh = im.width / dr; sy = (im.height - sh) / 2; }
+        ctx.drawImage(im, sx, sy, sw, sh, PAD, y, photoW, photoH);
+      } else {
+        // 아직 안 찍힌 컷: 빈 칸 + 컷 번호
+        ctx.fillStyle = isSci ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.45)';
+        ctx.fillRect(PAD, y, photoW, photoH);
+        ctx.fillStyle = isSci ? 'rgba(255,255,255,0.35)' : 'rgba(46,125,91,0.45)';
+        ctx.font = '900 46px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(String(i + 1), PAD + photoW / 2, y + photoH / 2 + 16);
+      }
 
-      // "과학자와 함께" 프레임: 컷마다 캐릭터가 좌우를 번갈아가며 함께 등장
+      // "과학자와 함께" 프레임: 컷마다 다른 포즈의 캐릭터가 좌우를 번갈아가며 등장
       if (isSci && matched) {
+        const sciIm = sciImageFor(matchedKey, i);
         const size = Math.round(photoW * 0.38);
         const onRight = i % 2 === 0;
         const cx = onRight ? PAD + photoW - size * 0.52 : PAD + size * 0.52;
@@ -728,7 +815,7 @@ function composeSticker() {
       ctx.lineWidth = isSci ? 3 : 5;
       roundRect(ctx, PAD, y, photoW, photoH, 14);
       ctx.stroke();
-    });
+    }
 
     // "과학의 날" 프레임: 가장자리에 과학 아이콘 스티커 장식
     if (!isSci) {
@@ -769,7 +856,7 @@ function composeSticker() {
       ctx.fillText(dateStr, W / 2, fy + 78);
     }
 
-    document.getElementById('stickerImg').src = canvas.toDataURL('image/png');
+    if (onDone) onDone(canvas);
   }
 }
 
