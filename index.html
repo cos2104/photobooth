@@ -4,6 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>과학의 날 포토부스 - 나와 닮은 과학자는?</title>
+
+<!-- ================================================== -->
+<!-- ★★★ 카카오 JavaScript 키를 아래 따옴표 안에 입력하세요 ★★★ -->
+<!-- (developers.kakao.com → 내 애플리케이션 → 앱 키 → JavaScript 키) -->
+<!-- ================================================== -->
+<script>
+const KAKAO_JS_KEY = 'e4a66ccdcee53d76e596e6cd51332c23';
+</script>
+
+<script src="https://t1.kakaocdn.net/kakao_js_sdk/2.7.4/kakao.min.js" crossorigin="anonymous"></script>
 <style>
   :root {
     --bg: #0b1026;
@@ -119,6 +129,15 @@
     font-size: 16px; cursor: pointer;
   }
   .ghost-btn:hover { background: rgba(255,255,255,.08); }
+  .kakao-btn {
+    background: #FEE500; color: #191919;
+    font-size: 18px; font-weight: 800;
+    border: none; border-radius: 999px; padding: 16px 36px;
+    cursor: pointer; box-shadow: 0 6px 20px rgba(254,229,0,.3);
+    transition: transform .15s;
+  }
+  .kakao-btn:hover { transform: scale(1.05); }
+  .avatar img { width: 120px; height: 120px; object-fit: contain; border-radius: 20px; }
 
   /* 프레임 선택 */
   .frames { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
@@ -269,6 +288,7 @@
   <img class="sticker-img" id="stickerImg" alt="완성된 4컷 스티커">
   <div class="btn-row">
     <button class="big-btn" onclick="saveSticker()">💾 스티커 저장하기</button>
+    <button class="kakao-btn" onclick="shareKakao()">💬 카톡으로 보내기</button>
     <button class="ghost-btn" onclick="retake()">다시 찍기</button>
   </div>
 </section>
@@ -276,6 +296,40 @@
 <canvas id="stickerCanvas"></canvas>
 
 <script>
+/* ---------- 카카오 공유 ----------
+   ※ KAKAO_JS_KEY는 이 파일 맨 위(<head> 부분)에서 입력합니다.
+   그리고 developers.kakao.com의 [플랫폼 → Web]에 사이트 주소(예: http://localhost:8734, GitHub Pages 주소)를 등록해야 동작합니다. */
+if (window.Kakao && KAKAO_JS_KEY) Kakao.init(KAKAO_JS_KEY);
+
+async function shareKakao() {
+  if (!KAKAO_JS_KEY || !window.Kakao || !Kakao.isInitialized()) {
+    alert('카카오 공유를 쓰려면 index.html 상단의 KAKAO_JS_KEY에\ndevelopers.kakao.com에서 발급받은 JavaScript 키를 입력해주세요.');
+    return;
+  }
+  try {
+    const canvas = document.getElementById('stickerCanvas');
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+    const file = new File([blob], 'photobooth.png', { type: 'image/png' });
+    const res = await Kakao.Share.uploadImage({ file: [file] });
+    const imgUrl = res.infos.original.url;
+    Kakao.Share.sendDefault({
+      objectType: 'feed',
+      content: {
+        title: '🔬 과학의 날 포토부스',
+        description: matched ? `나와 닮은 과학자: ${matched.name}` : '과학의 날 기념 4컷 사진!',
+        imageUrl: imgUrl,
+        imageWidth: 600, imageHeight: 1880,
+        link: { mobileWebUrl: location.href, webUrl: location.href }
+      },
+      buttons: [
+        { title: '나도 해보기', link: { mobileWebUrl: location.href, webUrl: location.href } }
+      ]
+    });
+  } catch (e) {
+    alert('공유에 실패했어요: ' + (e && e.message ? e.message : e));
+  }
+}
+
 /* ---------- 별 배경 ---------- */
 const starsEl = document.getElementById('stars');
 for (let i = 0; i < 60; i++) {
@@ -327,6 +381,14 @@ const SCIENTISTS = {
     keywords: ['공감', '자연', '사랑', '인내']
   }
 };
+
+/* ---------- 과학자 이미지 (images/키이름.png 가 있으면 자동 사용, 없으면 이모지) ---------- */
+const sciImages = {};
+Object.keys(SCIENTISTS).forEach(k => {
+  const im = new Image();
+  im.onload = () => { sciImages[k] = im; };
+  im.src = 'images/' + k + '.png';
+});
 
 /* ---------- 퀴즈 데이터 ---------- */
 const QUESTIONS = [
@@ -400,13 +462,24 @@ function renderQuestion() {
 }
 
 let matched = null;
+let matchedKey = null;
 
 function finishQuiz() {
   showScreen('scr-analyzing');
   setTimeout(() => {
     const best = Object.entries(scores).sort((a, b) => b[1] - a[1])[0][0];
     matched = SCIENTISTS[best];
-    document.getElementById('rAvatar').textContent = matched.avatar;
+    matchedKey = best;
+    const avatarEl = document.getElementById('rAvatar');
+    if (sciImages[best]) {
+      avatarEl.innerHTML = '';
+      const img = document.createElement('img');
+      img.src = sciImages[best].src;
+      img.alt = matched.name;
+      avatarEl.appendChild(img);
+    } else {
+      avatarEl.textContent = matched.avatar;
+    }
     document.getElementById('rName').textContent = matched.name;
     document.getElementById('rField').textContent = matched.field;
     document.getElementById('rDesc').textContent = matched.desc;
@@ -563,10 +636,22 @@ function composeSticker() {
       ctx.stroke();
     });
 
-    // 과학자 뱃지 (매칭 결과가 있을 때)
+    // 과학자 뱃지 (매칭 결과가 있을 때) — 이미지가 있으면 스티커처럼 붙이고, 없으면 이모지
     if (frameType === 'scientist' && matched) {
-      ctx.font = '52px sans-serif';
-      ctx.fillText(matched.avatar, W - 70, headerH + 60);
+      const sciIm = matchedKey ? sciImages[matchedKey] : null;
+      if (sciIm) {
+        const size = 150;
+        ctx.save();
+        ctx.translate(W - 30 - size / 2, headerH + 30);
+        ctx.rotate(8 * Math.PI / 180);
+        ctx.shadowColor = 'rgba(0,0,0,0.4)';
+        ctx.shadowBlur = 12;
+        ctx.drawImage(sciIm, -size / 2, -size / 2, size, size);
+        ctx.restore();
+      } else {
+        ctx.font = '52px sans-serif';
+        ctx.fillText(matched.avatar, W - 70, headerH + 60);
+      }
     }
 
     // 푸터
