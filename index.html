@@ -325,33 +325,60 @@ const KAKAO_JS_KEY = 'e4a66ccdcee53d76e596e6cd51332c23';
    그리고 developers.kakao.com의 [플랫폼 → Web]에 사이트 주소(예: http://localhost:8734, GitHub Pages 주소)를 등록해야 동작합니다. */
 if (window.Kakao && KAKAO_JS_KEY) Kakao.init(KAKAO_JS_KEY);
 
-async function shareKakao() {
-  if (!KAKAO_JS_KEY || !window.Kakao || !Kakao.isInitialized()) {
+/* 완성 화면에 들어오면 이미지를 미리 카카오 서버에 올려둠.
+   (버튼 클릭 후에 업로드하면 시간이 걸려서 브라우저가 공유 팝업을 차단하기 때문) */
+let kakaoImgUrl = null;
+let kakaoUploading = false;
+
+function preuploadKakaoImage() {
+  kakaoImgUrl = null;
+  if (!window.Kakao || !Kakao.isInitialized()) return;
+  const canvas = document.getElementById('stickerCanvas');
+  canvas.toBlob(async blob => {
+    kakaoUploading = true;
+    try {
+      const file = new File([blob], 'photobooth.png', { type: 'image/png' });
+      const res = await Kakao.Share.uploadImage({ file: [file] });
+      kakaoImgUrl = res.infos.original.url;
+    } catch (e) {
+      console.warn('카카오 이미지 업로드 실패:', e);
+    } finally {
+      kakaoUploading = false;
+    }
+  }, 'image/png');
+}
+
+function shareKakao() {
+  if (!KAKAO_JS_KEY) {
     alert('카카오 공유를 쓰려면 index.html 상단의 KAKAO_JS_KEY에\ndevelopers.kakao.com에서 발급받은 JavaScript 키를 입력해주세요.');
     return;
   }
-  try {
-    const canvas = document.getElementById('stickerCanvas');
-    const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
-    const file = new File([blob], 'photobooth.png', { type: 'image/png' });
-    const res = await Kakao.Share.uploadImage({ file: [file] });
-    const imgUrl = res.infos.original.url;
-    Kakao.Share.sendDefault({
-      objectType: 'feed',
-      content: {
-        title: '🔬 과학의 날 포토부스',
-        description: matched ? `나와 닮은 과학자: ${matched.name}` : '과학의 날 기념 4컷 사진!',
-        imageUrl: imgUrl,
-        imageWidth: 600, imageHeight: 1880,
-        link: { mobileWebUrl: location.href, webUrl: location.href }
-      },
-      buttons: [
-        { title: '나도 해보기', link: { mobileWebUrl: location.href, webUrl: location.href } }
-      ]
-    });
-  } catch (e) {
-    alert('공유에 실패했어요: ' + (e && e.message ? e.message : e));
+  if (!window.Kakao || !Kakao.isInitialized()) {
+    alert('카카오 SDK를 불러오지 못했어요.\n인터넷 연결과 JavaScript 키를 확인해주세요.');
+    return;
   }
+  if (kakaoUploading) {
+    alert('사진을 업로드하는 중이에요. 잠시 후 다시 눌러주세요!');
+    return;
+  }
+  if (!kakaoImgUrl) {
+    alert('사진 업로드에 실패했어요.\n\ndevelopers.kakao.com → 내 애플리케이션 → [플랫폼 → Web]에\n지금 이 사이트 주소가 등록되어 있는지 확인해주세요.\n예: ' + location.origin);
+    preuploadKakaoImage(); // 재시도
+    return;
+  }
+  Kakao.Share.sendDefault({
+    objectType: 'feed',
+    content: {
+      title: '🔬 과학의 날 포토부스',
+      description: matched ? `나와 닮은 과학자: ${matched.name}` : '과학의 날 기념 4컷 사진!',
+      imageUrl: kakaoImgUrl,
+      imageWidth: 600, imageHeight: 1880,
+      link: { mobileWebUrl: location.href, webUrl: location.href }
+    },
+    buttons: [
+      { title: '나도 해보기', link: { mobileWebUrl: location.href, webUrl: location.href } }
+    ]
+  });
 }
 
 /* ---------- 별 배경 ---------- */
@@ -452,14 +479,21 @@ function removeImageBackground(img) {
     if (px[x * 4 + 3] < 250 || px[((H - 1) * W + x) * 4 + 3] < 250) return cropToContent(c);
   }
 
-  // 배경색 추정: 네 모서리 픽셀의 평균
-  const corners = [0, (W - 1) * 4, (H - 1) * W * 4, ((H - 1) * W + W - 1) * 4];
+  // 배경색 추정: 가장자리 테두리 픽셀들의 평균
+  const borderIdx = [];
+  const step = Math.max(1, Math.floor(W / 60));
+  for (let x = 0; x < W; x += step) { borderIdx.push(x * 4, ((H - 1) * W + x) * 4); }
+  for (let y = 0; y < H; y += step) { borderIdx.push(y * W * 4, (y * W + W - 1) * 4); }
   let br = 0, bg = 0, bb = 0;
-  corners.forEach(i => { br += px[i]; bg += px[i + 1]; bb += px[i + 2]; });
-  br /= 4; bg /= 4; bb /= 4;
+  borderIdx.forEach(i => { br += px[i]; bg += px[i + 1]; bb += px[i + 2]; });
+  br /= borderIdx.length; bg /= borderIdx.length; bb /= borderIdx.length;
 
-  const TOL = 48; // 배경으로 판정할 색 차이 허용치
   const dist = i => Math.sqrt((px[i] - br) ** 2 + (px[i + 1] - bg) ** 2 + (px[i + 2] - bb) ** 2);
+
+  // 허용치 자동 조절: 배경이 균일하면 낮게(흰 수염·흰 옷 보호), 얼룩덜룩하면 높게
+  let maxDev = 0;
+  borderIdx.forEach(i => { const d = dist(i); if (d > maxDev) maxDev = d; });
+  const TOL = Math.min(48, Math.max(14, Math.round(maxDev * 1.5) + 8));
 
   // 가장자리에서 시작해 배경색과 비슷한 픽셀만 따라가며 투명 처리 (flood fill)
   const visited = new Uint8Array(W * H);
@@ -519,39 +553,51 @@ const QUESTIONS = [
   { q: '새로운 문제를 만났을 때 나는?',
     a: [
       ['일단 머릿속으로 자유롭게 상상해본다', { einstein: 2, tesla: 1 }],
-      ['자료를 찾고 차근차근 분석한다', { newton: 2, curie: 1 }],
-      ['직접 관찰하고 실험해본다', { darwin: 2, goodall: 1 }],
+      ['자료를 찾아 차근차근 분석한다', { newton: 2, curie: 1 }],
+      ['직접 관찰하고 꼼꼼히 기록한다', { darwin: 2, goodall: 1 }],
+      ['될 때까지 이것저것 시도해본다', { tesla: 2, curie: 1 }],
+    ]},
+  { q: '친구들이 말하는 나는 어떤 사람?',
+    a: [
+      ['엉뚱하지만 기발한 아이디어꾼', { einstein: 2, tesla: 1 }],
+      ['한번 시작하면 끝을 보는 노력파', { curie: 2, newton: 1 }],
+      ['차분하고 꼼꼼한 계획형', { newton: 2, darwin: 1 }],
+      ['다정하게 이야기를 잘 들어주는 친구', { goodall: 2, darwin: 1 }],
     ]},
   { q: '조별 과제에서 나의 역할은?',
     a: [
       ['아이디어를 쏟아내는 브레인', { tesla: 2, einstein: 1 }],
       ['끝까지 마무리하는 책임자', { curie: 2, newton: 1 }],
-      ['팀 분위기를 챙기는 조율자', { goodall: 2, darwin: 1 }],
+      ['자료 조사와 정리 담당', { darwin: 2, newton: 1 }],
+      ['팀 분위기를 챙기는 조율자', { goodall: 2, einstein: 1 }],
     ]},
-  { q: '주말에 하고 싶은 것은?',
+  { q: '주말에 가장 하고 싶은 것은?',
     a: [
-      ['공상하며 뒹굴뒹굴', { einstein: 2 }],
-      ['밀린 할 일 몰아서 끝내기', { curie: 2 }],
-      ['산책하며 자연 구경', { darwin: 1, goodall: 2 }],
-      ['신기한 가젯/기술 구경', { tesla: 2, newton: 1 }],
+      ['공상하며 뒹굴뒹굴하기', { einstein: 2, goodall: 1 }],
+      ['밀린 할 일 몰아서 끝내기', { curie: 2, newton: 1 }],
+      ['공원이나 산에서 동물·자연 구경', { goodall: 2, darwin: 1 }],
+      ['신기한 전자기기·신기술 구경', { tesla: 2, newton: 1 }],
     ]},
-  { q: '더 끌리는 말은?',
+  { q: '가장 마음에 와닿는 말은?',
     a: [
-      ['"상상력이 지식보다 중요하다"', { einstein: 2, tesla: 1 }],
-      ['"천재는 1%의 영감과 99%의 노력"', { curie: 2, newton: 1 }],
-      ['"자연은 서두르지 않는다"', { darwin: 2, goodall: 1 }],
+      ['"상상력은 지식보다 중요하다"', { einstein: 2, tesla: 1 }],
+      ['"천재는 1%의 영감과 99%의 노력이다"', { curie: 2, newton: 1 }],
+      ['"자연은 서두르지 않지만 모든 것을 이룬다"', { darwin: 2, goodall: 1 }],
+      ['"현재는 그들의 것이지만, 미래는 나의 것이다"', { tesla: 2, einstein: 1 }],
     ]},
-  { q: '실험이 계속 실패한다면?',
+  { q: '실험이 계속 실패한다면 나는?',
     a: [
-      ['될 때까지 반복한다', { curie: 2, newton: 1 }],
-      ['완전히 새로운 방법을 떠올린다', { einstein: 1, tesla: 2 }],
-      ['잠시 멈추고 처음부터 다시 관찰한다', { darwin: 2, goodall: 1 }],
+      ['조건을 바꿔가며 될 때까지 반복한다', { curie: 2, newton: 1 }],
+      ['완전히 새로운 방법을 떠올려본다', { einstein: 2, tesla: 1 }],
+      ['처음으로 돌아가 천천히 다시 관찰한다', { darwin: 2, goodall: 1 }],
+      ['어디서 틀렸는지 논리적으로 원인을 찾는다', { newton: 2, curie: 1 }],
     ]},
   { q: '나에게 과학이란?',
     a: [
       ['세상의 비밀을 푸는 열쇠', { newton: 2, einstein: 1 }],
-      ['미래를 만드는 도구', { tesla: 2, curie: 1 }],
+      ['미래를 만들어가는 도구', { tesla: 2, curie: 1 }],
       ['생명과 자연을 이해하는 길', { goodall: 2, darwin: 1 }],
+      ['끝없이 이어지는 즐거운 상상', { einstein: 2, goodall: 1 }],
     ]},
 ];
 
@@ -591,7 +637,11 @@ let matchedKey = null;
 function finishQuiz() {
   showScreen('scr-analyzing');
   setTimeout(() => {
-    const best = Object.entries(scores).sort((a, b) => b[1] - a[1])[0][0];
+    // 최고 점수가 여러 명이면 그중 무작위로 선택 (특정 과학자 편향 방지)
+    const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+    const topScore = sorted[0][1];
+    const candidates = sorted.filter(e => e[1] === topScore);
+    const best = candidates[Math.floor(Math.random() * candidates.length)][0];
     matched = SCIENTISTS[best];
     matchedKey = best;
     const avatarEl = document.getElementById('rAvatar');
@@ -728,6 +778,7 @@ function capture() {
 function composeSticker() {
   drawSticker(document.getElementById('stickerCanvas'), shots, c => {
     document.getElementById('stickerImg').src = c.toDataURL('image/png');
+    preuploadKakaoImage(); // 카카오 공유용 이미지 미리 업로드
   });
 }
 
